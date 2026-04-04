@@ -11,8 +11,8 @@ DROP TABLE IF EXISTS item_tags;
 DROP TABLE IF EXISTS item_values;
 DROP TABLE IF EXISTS items;
 DROP TABLE IF EXISTS collection_fields;
-DROP TABLE IF EXISTS collections;
 DROP TABLE IF EXISTS tags;
+DROP TABLE IF EXISTS collections;
 DROP TABLE IF EXISTS users;
 
 -- Users
@@ -67,12 +67,17 @@ CREATE TABLE item_values (
 ) ENGINE=InnoDB;
 
 -- Tags
+-- collection_id = NULL  => global tag (admin only)
+-- collection_id = N     => collection-specific tag (all users)
 CREATE TABLE tags (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(128) NOT NULL UNIQUE,
+    name VARCHAR(128) NOT NULL,
+    collection_id INT DEFAULT NULL,
     image_path VARCHAR(255) DEFAULT NULL,
     created_by INT NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_tag_name_scope (name, collection_id),
+    FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE,
     FOREIGN KEY (created_by) REFERENCES users(id)
 ) ENGINE=InnoDB;
 
@@ -86,8 +91,6 @@ CREATE TABLE item_tags (
 ) ENGINE=InnoDB;
 
 -- ============================================================
--- Initial admin user  (login: admin / admin)
+-- After running this script, go to setup.php in your browser
+-- to create the initial admin user. Delete setup.php afterwards.
 -- ============================================================
-INSERT INTO users (username, password_hash, is_admin)
-VALUES ('admin', '$2y$12$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 1);
--- password_hash above = bcrypt of "admin"  (cost 12)

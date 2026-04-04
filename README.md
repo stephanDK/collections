@@ -16,17 +16,19 @@ A lightweight, self-hosted web application for managing personal collections —
   - Create and delete collections with custom names and descriptions
   - Define custom fields per collection (text, number, or boolean)
   - Toggle image support per collection
+  - Manage global tags (visible across all collections)
 - **Items**
   - Add, edit and delete items in any collection
   - Sortable, searchable table with pagination
+  - Click any row to see a full item view
   - Upload an image per item (JPEG, PNG, GIF, WebP)
-- **Tags**
-  - Create tags with an optional image
-  - Assign multiple tags to each item
-  - Search tags and browse all items with a given tag
-  - Filter item lists by tag
+  - "Save & Add Another" for rapid data entry
+- **Tags — two scopes**
+  - **Global tags** (admin only) — apply across all collections
+  - **Collection tags** (all users) — specific to one collection
+  - Tags can have an optional image
+  - Click a tag to see all items with that tag
 - **Responsive** — works on desktop and mobile
-- **Warm editorial design** — Playfair Display + Source Sans 3, paper-toned palette
 
 ---
 
@@ -49,13 +51,10 @@ git clone https://github.com/yourusername/collections.git
 
 ### 2. Create the database
 
-In phpMyAdmin (or via CLI), create a new database with `utf8mb4_unicode_ci` collation, then run the install script:
-
-```
-phpMyAdmin → select your database → SQL tab → paste contents of install.sql → execute
-```
-
-This creates all tables and inserts a default admin user (`admin` / `admin`).
+In phpMyAdmin (or via CLI):
+1. Create a new database — name it whatever you like, e.g. `collections_db`
+2. Set collation to `utf8mb4_unicode_ci`
+3. Select the new database, go to the **SQL tab**, paste the contents of `install.sql` and execute
 
 ### 3. Configure
 
@@ -69,10 +68,10 @@ Edit `config.php`:
 
 ```php
 define('DB_HOST', 'localhost');
-define('DB_NAME', 'your_database_name');
+define('DB_NAME', 'your_database_name');  // the name you chose above
 define('DB_USER', 'your_db_username');
 define('DB_PASS', 'your_db_password');
-define('BASE_URL', 'https://yourdomain.com/collections');
+define('BASE_URL', 'https://yourdomain.com/collections');  // no trailing slash
 ```
 
 ### 4. Create the uploads folder
@@ -84,11 +83,21 @@ chmod 755 uploads
 
 ### 5. Upload via FTP
 
-Upload all files to your web server. `config.php` is excluded from Git — never commit it.
+Upload all files to your web server. `config.php` and `setup.php` are excluded from Git — see Security notes below.
 
-### 6. Log in and change the password
+### 6. Create the admin user
 
-Go to your site URL, log in with `admin` / `admin`, and immediately create a new admin user with a strong password, then delete the default one.
+Go to `https://yourdomain.com/collections/setup.php` in your browser.
+
+This generates a secure password hash on your own server and inserts the admin user into the database. You will see a confirmation message when it succeeds.
+
+> ⚠️ **Delete `setup.php` from the server immediately after** — it should never be left accessible.
+
+### 7. Log in and change the password
+
+Go to `https://yourdomain.com/collections/` and log in with `admin` / `admin`.
+
+Immediately go to **Admin → Users**, create a new admin user with a strong password, and delete the default `admin` account.
 
 ---
 
@@ -96,20 +105,23 @@ Go to your site URL, log in with `admin` / `admin`, and immediately create a new
 
 ```
 collections/
-├── config.example.php   # Copy to config.php and fill in your credentials
-├── install.sql          # Database schema + default admin user
-├── .htaccess            # Blocks direct access to config.php
-├── index.php            # Login page
+├── config.example.php     # Copy to config.php and fill in your credentials
+├── install.sql            # Database schema
+├── setup.php              # Run once to create admin user — DELETE AFTER USE
+├── .htaccess              # Blocks direct access to config.php
+├── index.php              # Login page
 ├── logout.php
-├── layout.php           # Shared header/footer
+├── layout.php             # Shared header/footer
 ├── style.css
-├── collections.php      # Collection overview
-├── items.php            # Item list with search, sort, filter
-├── item_edit.php        # Add / edit item
-├── item_delete.php      # Delete handler
-├── admin.php            # Admin panel
-├── tags.php             # Tag management
-└── uploads/             # Image uploads (not in Git)
+├── collections.php        # Collection overview
+├── items.php              # Item list with search, sort, filter
+├── item_edit.php          # Add / edit item
+├── item_view.php          # Single item view
+├── item_delete.php        # Delete handler
+├── collection_tags.php    # Tag management per collection
+├── tag_view.php           # Single tag view
+├── admin.php              # Admin panel (users, collections, global tags)
+└── uploads/               # Image uploads (not in Git)
 ```
 
 ---
@@ -117,6 +129,7 @@ collections/
 ## Security notes
 
 - `config.php` is blocked by `.htaccess` and excluded from Git via `.gitignore`
+- `setup.php` and `reset.php` are excluded from Git — never leave them on the server after use
 - `uploads/` is excluded from Git — back it up separately
 - PHP execution is disabled in the `uploads/` folder via `.htaccess`
 - Passwords are hashed with `password_hash()` (bcrypt)

@@ -378,9 +378,26 @@ table.data-table {
 .text-muted { color: var(--muted); font-size: .88rem; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
 
+/* ── Clickable table rows ── */
+.item-row:hover td { background: #e8e0d0 !important; cursor: pointer; }
+
 /* ── Responsive ── */
+@media (max-width: 768px) {
+  .site-header__inner { flex-wrap: wrap; height: auto; padding: 10px 16px; gap: 8px; }
+  .site-nav { margin-left: 0; width: 100%; gap: 4px; }
+  .site-nav a { padding: 5px 10px; font-size: .82rem; }
+  .site-main { padding: 16px 12px 48px; }
+  .page-title { font-size: 1.35rem; }
+  .admin-grid { grid-template-columns: 1fr; }
+  .collection-grid { grid-template-columns: 1fr; }
+  .toolbar { flex-direction: column; align-items: stretch; }
+  .toolbar .search-input { min-width: 0; }
+}
+
 @media (max-width: 600px) {
-  .site-main { padding: 20px 16px 48px; }
-  .page-title { font-size: 1.5rem; }
-  .login-box { padding: 28px 20px; }
+  .site-main { padding: 16px 12px 40px; }
+  .page-title { font-size: 1.25rem; }
+  .login-box { padding: 28px 16px; }
+  .data-table .hide-mobile { display: none; }
+  .pagination a, .pagination span { padding: 5px 9px; font-size: .82rem; }
 }

@@ -126,13 +126,49 @@ if ($action === 'edit_collection' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect(BASE_URL . '/admin.php');
 }
 
+
+// --- Global tag actions (admin only) ---
+if ($action === 'add_global_tag' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $name = trim($_POST['tag_name'] ?? '');
+    if ($name) {
+        $img = upload_image('tag_image', 'tags');
+        try {
+            $pdo->prepare('INSERT INTO tags (name, collection_id, image_path, created_by) VALUES (?, NULL, ?, ?)')
+                ->execute([$name, $img, $_SESSION['user_id']]);
+            flash('success', "Global tag '$name' created.");
+        } catch (PDOException $e) {
+            flash('error', 'A global tag with that name already exists.');
+        }
+    } else {
+        flash('error', 'Tag name is required.');
+    }
+    redirect(BASE_URL . '/admin.php#global-tags');
+}
+
+if ($action === 'delete_global_tag' && isset($_POST['tag_id'])) {
+    $tid = (int)$_POST['tag_id'];
+    $tag = $pdo->prepare('SELECT image_path, collection_id FROM tags WHERE id=?');
+    $tag->execute([$tid]);
+    $tag = $tag->fetch();
+    if ($tag && $tag['collection_id'] === null) { // only global tags
+        if ($tag['image_path']) {
+            $f = UPLOAD_DIR . $tag['image_path'];
+            if (file_exists($f)) unlink($f);
+        }
+        $pdo->prepare('DELETE FROM tags WHERE id=?')->execute([$tid]);
+        flash('success', 'Global tag deleted.');
+    }
+    redirect(BASE_URL . '/admin.php#global-tags');
+}
+
 // ── Fetch data ────────────────────────────────────────────────────────────────
 $users       = $pdo->query('SELECT * FROM users ORDER BY username')->fetchAll();
 $collections = $pdo->query('SELECT c.*, (SELECT COUNT(*) FROM items i WHERE i.collection_id=c.id) AS item_count FROM collections c ORDER BY c.name')->fetchAll();
 
 // For editing: load a single collection
-$edit_coll   = null;
-$edit_fields = [];
+$edit_coll        = null;
+$edit_fields      = [];
+$edit_field_counts = []; // how many items have a value for each field
 if (isset($_GET['edit_coll'])) {
     $ecid = (int)$_GET['edit_coll'];
     $edit_coll = $pdo->prepare('SELECT * FROM collections WHERE id=?');
@@ -142,8 +178,28 @@ if (isset($_GET['edit_coll'])) {
         $ef = $pdo->prepare('SELECT * FROM collection_fields WHERE collection_id=? ORDER BY sort_order');
         $ef->execute([$ecid]);
         $edit_fields = $ef->fetchAll();
+
+        // Count non-empty values per field
+        foreach ($edit_fields as $ef_row) {
+            $cnt = $pdo->prepare(
+                "SELECT COUNT(*) FROM item_values
+                 WHERE field_id=? AND value IS NOT NULL AND value != '' AND value != '0'"
+            );
+            $cnt->execute([$ef_row['id']]);
+            $edit_field_counts[$ef_row['id']] = (int)$cnt->fetchColumn();
+        }
     }
 }
+
+
+// Global tags
+$global_tags = $pdo->query(
+    'SELECT t.*, u.username,
+            (SELECT COUNT(*) FROM item_tags it WHERE it.tag_id=t.id) AS item_count
+     FROM tags t LEFT JOIN users u ON u.id=t.created_by
+     WHERE t.collection_id IS NULL
+     ORDER BY t.name'
+)->fetchAll();
 
 // ── Render ───────────────────────────────────────────────────────────────────
 page_header('Admin', 'admin');
@@ -266,17 +322,33 @@ page_header('Admin', 'admin');
 
         <h4 style="margin:16px 0 8px;font-family:var(--font-head)">Fields</h4>
         <ul id="fields-list">
-          <?php foreach ($edit_fields as $i => $ef): ?>
-          <li>
+          <?php foreach ($edit_fields as $i => $ef):
+                $count = $edit_field_counts[$ef['id']] ?? 0;
+          ?>
+          <li data-field-id="<?= $ef['id'] ?>"
+              data-field-name="<?= h($ef['field_name']) ?>"
+              data-field-type="<?= $ef['field_type'] ?>"
+              data-value-count="<?= $count ?>">
             <input type="hidden" name="field_id[]" value="<?= $ef['id'] ?>">
             <input type="text" name="field_name[]" class="form-control field-name" placeholder="Field name"
                    value="<?= h($ef['field_name']) ?>" required>
-            <select name="field_type[]" class="form-control" style="width:120px">
+            <select name="field_type[]" class="form-control field-type" style="width:120px"
+                    data-original-type="<?= $ef['field_type'] ?>"
+                    onchange="warnTypeChange(this, <?= $count ?>, '<?= h($ef['field_name']) ?>')">
               <?php foreach (['text','number','boolean'] as $t): ?>
               <option value="<?= $t ?>" <?= $ef['field_type']===$t?'selected':'' ?>><?= ucfirst($t) ?></option>
               <?php endforeach; ?>
             </select>
-            <button type="button" class="btn btn-danger btn-sm" onclick="this.closest('li').remove()">✕</button>
+            <?php if ($count > 0): ?>
+            <span class="field-count-badge" title="<?= $count ?> item<?= $count!=1?'s have':'has' ?> a value here">
+              <?= $count ?>
+            </span>
+            <?php endif; ?>
+            <button type="button" class="btn btn-danger btn-sm"
+                    onclick="confirmDeleteField(this, <?= $ef['id'] ?>, '<?= h($ef['field_name']) ?>', <?= $count ?>)">✕</button>
+            <?php if ($count > 0): ?>
+            <div class="field-warning" id="warn-<?= $ef['id'] ?>" style="display:none"></div>
+            <?php endif; ?>
           </li>
           <?php endforeach; ?>
         </ul>
@@ -294,13 +366,45 @@ page_header('Admin', 'admin');
 
 </div><!-- /admin-grid -->
 
+<style>
+#fields-list li {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.field-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #e8a87c;
+  color: #5a2800;
+  font-size: .75rem;
+  font-weight: 700;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  padding: 0 6px;
+  cursor: default;
+}
+.field-warning {
+  width: 100%;
+  background: #fdf3e7;
+  border: 1px solid #e8a87c;
+  border-radius: 4px;
+  padding: 7px 10px;
+  font-size: .83rem;
+  color: #7a3800;
+  margin-top: 2px;
+}
+.field-warning strong { color: #b5451b; }
+</style>
+
 <script>
 function addField() {
   const li = document.createElement('li');
   li.innerHTML = `
     <input type="hidden" name="field_id[]" value="0">
     <input type="text" name="field_name[]" class="form-control field-name" placeholder="Field name" required>
-    <select name="field_type[]" class="form-control" style="width:120px">
+    <select name="field_type[]" class="form-control field-type" style="width:120px">
       <option value="text">Text</option>
       <option value="number">Number</option>
       <option value="boolean">Boolean</option>
@@ -309,6 +413,114 @@ function addField() {
   `;
   document.getElementById('fields-list').appendChild(li);
 }
+
+function confirmDeleteField(btn, fieldId, fieldName, valueCount) {
+  if (valueCount > 0) {
+    const msg = `⚠️ "${fieldName}" has values in ${valueCount} item${valueCount !== 1 ? 's' : ''}.\n\nDeleting this field will permanently erase all those values.\n\nAre you sure?`;
+    if (!confirm(msg)) return;
+  }
+  btn.closest('li').remove();
+}
+
+function warnTypeChange(select, valueCount, fieldName) {
+  if (valueCount === 0) return;
+  const li      = select.closest('li');
+  const fieldId = li.dataset.fieldId;
+  const origType = select.dataset.originalType;
+  const newType  = select.value;
+  let warnDiv = document.getElementById('warn-' + fieldId);
+
+  if (!warnDiv) {
+    warnDiv = document.createElement('div');
+    warnDiv.className = 'field-warning';
+    warnDiv.id = 'warn-' + fieldId;
+    li.appendChild(warnDiv);
+  }
+
+  if (newType === origType) {
+    warnDiv.style.display = 'none';
+    return;
+  }
+
+  let msg = '';
+  if (origType === 'boolean' && newType !== 'boolean') {
+    msg = `<strong>Note:</strong> "${fieldName}" has ${valueCount} item${valueCount!==1?'s':''} with boolean values (0/1). Changing to <em>${newType}</em> will keep the raw data but display it as text.`;
+  } else if (newType === 'boolean') {
+    msg = `<strong>Note:</strong> Changing "${fieldName}" to <em>Boolean</em> — existing text/number values will be treated as true/false (empty or "0" = No, anything else = Yes).`;
+  } else if (origType === 'text' && newType === 'number') {
+    msg = `<strong>Note:</strong> "${fieldName}" has ${valueCount} item${valueCount!==1?'s':''} with text values. Items where the value is not a valid number will show an empty field in forms.`;
+  } else {
+    msg = `<strong>Note:</strong> "${fieldName}" has ${valueCount} item${valueCount!==1?'s':''} with existing values. The data is preserved but may display differently as <em>${newType}</em>.`;
+  }
+
+  warnDiv.innerHTML = msg;
+  warnDiv.style.display = 'block';
+}
 </script>
+
+
+<!-- ── Global Tags ─────────────────────────────────────────────────────── -->
+<div class="card mt-24" id="global-tags">
+  <h2 style="font-family:var(--font-head);margin-bottom:16px">Global Tags
+    <span class="text-muted" style="font-size:.9rem;font-weight:400"> — visible across all collections</span>
+  </h2>
+
+  <div style="display:grid;grid-template-columns:1fr 320px;gap:24px;align-items:start">
+    <div>
+      <?php if (empty($global_tags)): ?>
+        <p class="text-muted">No global tags yet.</p>
+      <?php else: ?>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Tag</th><th>Used in</th><th>Created by</th><th>Actions</th></tr></thead>
+          <tbody>
+          <?php foreach ($global_tags as $t): ?>
+          <tr>
+            <td>
+              <div style="display:flex;align-items:center;gap:8px">
+                <?php if ($t['image_path']): ?>
+                  <img src="<?= UPLOAD_URL . h($t['image_path']) ?>"
+                       style="width:28px;height:28px;border-radius:50%;object-fit:cover;border:1px solid var(--border)">
+                <?php else: ?>
+                  <span style="width:28px;height:28px;background:#e8e0d0;border-radius:50%;display:inline-block"></span>
+                <?php endif; ?>
+                <strong><?= h($t['name']) ?></strong>
+              </div>
+            </td>
+            <td class="text-muted"><?= $t['item_count'] ?> item<?= $t['item_count']!=1?'s':'' ?></td>
+            <td class="text-muted"><?= h($t['username'] ?? '—') ?></td>
+            <td class="actions">
+              <a href="tag_view.php?id=<?= $t['id'] ?>" class="btn btn-ghost btn-sm">View</a>
+              <form method="post" onsubmit="return confirm('Delete global tag <?= h($t['name']) ?>? It will be removed from all items.')">
+                <input type="hidden" name="action" value="delete_global_tag">
+                <input type="hidden" name="tag_id" value="<?= $t['id'] ?>">
+                <button class="btn btn-danger btn-sm">Delete</button>
+              </form>
+            </td>
+          </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+      <?php endif; ?>
+    </div>
+
+    <div class="card" style="background:#f5f0e8">
+      <h3 style="font-family:var(--font-head);margin-bottom:14px">Add Global Tag</h3>
+      <form method="post" enctype="multipart/form-data">
+        <input type="hidden" name="action" value="add_global_tag">
+        <div class="form-group">
+          <label>Tag Name</label>
+          <input type="text" name="tag_name" class="form-control" required placeholder="e.g. Rare, Favourite">
+        </div>
+        <div class="form-group">
+          <label>Image (optional)</label>
+          <input type="file" name="tag_image" class="form-control" accept="image/*">
+        </div>
+        <button class="btn btn-primary">Create Global Tag</button>
+      </form>
+    </div>
+  </div>
+</div>
 
 <?php page_footer(); ?>

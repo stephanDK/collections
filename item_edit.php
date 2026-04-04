@@ -3,10 +3,9 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/layout.php';
 require_login();
 
-// Determine mode: edit existing (id=) or add new (coll=)
-$item_id = (int)($_GET['id'] ?? 0);
-$coll_id = 0;
-$item    = null;
+$item_id   = (int)($_GET['id']    ?? 0);
+$coll_id   = 0;
+$item      = null;
 $item_vals = [];
 $item_tags = [];
 
@@ -17,17 +16,15 @@ if ($item_id) {
     if (!$item) redirect(BASE_URL . '/collections.php');
     $coll_id = $item['collection_id'];
 
-    // existing values
     $vs = $pdo->prepare('SELECT field_id, value FROM item_values WHERE item_id = ?');
     $vs->execute([$item_id]);
     foreach ($vs->fetchAll() as $v) $item_vals[$v['field_id']] = $v['value'];
 
-    // existing tags
     $ts = $pdo->prepare('SELECT tag_id FROM item_tags WHERE item_id = ?');
     $ts->execute([$item_id]);
     $item_tags = array_column($ts->fetchAll(), 'tag_id');
 } else {
-    $coll_id = (int)($_GET['coll'] ?? 0);
+    $coll_id = (int)($_GET['coll'] ?? (int)($_POST['coll_id'] ?? 0));
     if (!$coll_id) redirect(BASE_URL . '/collections.php');
 }
 
@@ -40,14 +37,25 @@ $fields_stmt = $pdo->prepare('SELECT * FROM collection_fields WHERE collection_i
 $fields_stmt->execute([$coll_id]);
 $fields = $fields_stmt->fetchAll();
 
-// All tags for the checkbox list
-$all_tags = $pdo->query('SELECT * FROM tags ORDER BY name')->fetchAll();
+// Tags: global + collection-specific
+$global_tags = $pdo->prepare(
+    'SELECT * FROM tags WHERE collection_id IS NULL ORDER BY name'
+);
+$global_tags->execute();
+$global_tags = $global_tags->fetchAll();
+
+$coll_tags = $pdo->prepare(
+    'SELECT * FROM tags WHERE collection_id = ? ORDER BY name'
+);
+$coll_tags->execute([$coll_id]);
+$coll_tags = $coll_tags->fetchAll();
+
+$all_tags = array_merge($global_tags, $coll_tags);
 
 // ── Handle POST ───────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pdo->beginTransaction();
 
-    // Upload image if present
     $image_path = $item['image_path'] ?? null;
     if ($coll['has_images'] && !empty($_FILES['item_image']['tmp_name'])) {
         $up = upload_image('item_image', 'items');
@@ -55,41 +63,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($item_id) {
-        // Update
         $pdo->prepare('UPDATE items SET image_path=?, updated_at=NOW() WHERE id=?')
             ->execute([$image_path, $item_id]);
     } else {
-        // Insert
         $pdo->prepare('INSERT INTO items (collection_id, created_by, image_path) VALUES (?,?,?)')
             ->execute([$coll_id, $_SESSION['user_id'], $image_path]);
         $item_id = (int)$pdo->lastInsertId();
     }
 
-    // Save field values
     foreach ($fields as $f) {
         $key = 'field_' . $f['id'];
-        if ($f['field_type'] === 'boolean') {
-            $val = isset($_POST[$key]) ? '1' : '0';
-        } else {
-            $val = trim($_POST[$key] ?? '');
-        }
+        $val = $f['field_type'] === 'boolean'
+            ? (isset($_POST[$key]) ? '1' : '0')
+            : trim($_POST[$key] ?? '');
         $pdo->prepare(
             'INSERT INTO item_values (item_id, field_id, value) VALUES (?,?,?)
              ON DUPLICATE KEY UPDATE value = VALUES(value)'
         )->execute([$item_id, $f['id'], $val]);
     }
 
-    // Save tags
+    // Tags are now inside the same <form> — no JS merging needed
     $pdo->prepare('DELETE FROM item_tags WHERE item_id = ?')->execute([$item_id]);
-    $selected_tags = $_POST['tags'] ?? [];
-    foreach ($selected_tags as $tid) {
+    foreach ($_POST['tags'] ?? [] as $tid) {
         $tid = (int)$tid;
         if ($tid > 0) {
-            $pdo->prepare('INSERT IGNORE INTO item_tags (item_id, tag_id) VALUES (?,?)')->execute([$item_id, $tid]);
+            $pdo->prepare('INSERT IGNORE INTO item_tags (item_id, tag_id) VALUES (?,?)')
+                ->execute([$item_id, $tid]);
         }
     }
 
     $pdo->commit();
+
+    if (isset($_POST['quick_add'])) {
+        flash('success', 'Item saved — add another:');
+        redirect(BASE_URL . '/item_edit.php?coll=' . $coll_id . '&quick=1');
+    }
+
     flash('success', 'Item saved.');
     redirect(BASE_URL . '/items.php?coll=' . $coll_id);
 }
@@ -103,13 +112,17 @@ page_header(($is_edit ? 'Edit' : 'Add') . ' Item – ' . $coll['name'], 'collect
     <?= $is_edit ? 'Edit Item' : 'Add Item' ?>
     <small><?= h($coll['name']) ?></small>
   </h1>
-  <a href="items.php?coll=<?= $coll_id ?>" class="btn btn-ghost btn-sm">← Back</a>
+  <a href="items.php?coll=<?= $coll_id ?>" class="btn btn-ghost btn-sm">← Back to list</a>
 </div>
 
-<div style="display:grid;grid-template-columns:1fr 320px;gap:24px;align-items:start">
-  <!-- Main form -->
-  <div class="card">
-    <form method="post" enctype="multipart/form-data">
+<!-- Single form — tags included directly, no JS merging needed -->
+<form method="post" enctype="multipart/form-data">
+  <input type="hidden" name="coll_id" value="<?= $coll_id ?>">
+
+  <div class="item-edit-grid">
+
+    <!-- Main fields -->
+    <div class="card">
 
       <?php if ($coll['has_images']): ?>
       <div class="form-group">
@@ -147,54 +160,110 @@ page_header(($is_edit ? 'Edit' : 'Add') . ' Item – ' . $coll['name'], 'collect
       </div>
       <?php endforeach; ?>
 
-      <div style="margin-top:24px;display:flex;gap:10px">
-        <button class="btn btn-primary"><?= $is_edit ? 'Save Changes' : 'Create Item' ?></button>
+      <div style="margin-top:24px;display:flex;gap:10px;flex-wrap:wrap">
+        <button type="submit" name="save" value="1" class="btn btn-primary">
+          <?= $is_edit ? 'Save Changes' : 'Create Item' ?>
+        </button>
+        <?php if (!$is_edit): ?>
+        <button type="submit" name="quick_add" value="1" class="btn btn-success">
+          ✚ Save &amp; Add Another
+        </button>
+        <?php endif; ?>
         <a href="items.php?coll=<?= $coll_id ?>" class="btn btn-ghost">Cancel</a>
       </div>
-    </form>
-  </div>
-
-  <!-- Tags sidebar -->
-  <div class="card">
-    <h3 style="font-family:var(--font-head);margin-bottom:16px">Tags</h3>
-
-    <?php if (empty($all_tags)): ?>
-      <p class="text-muted">No tags yet. <a href="tags.php">Create some tags</a>.</p>
-    <?php else: ?>
-      <div style="max-height:400px;overflow-y:auto;display:flex;flex-direction:column;gap:8px">
-        <?php foreach ($all_tags as $t): ?>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px">
-          <input type="checkbox" form="tag-form" name="tags[]" value="<?= $t['id'] ?>"
-                 <?= in_array($t['id'], $item_tags) ? 'checked' : '' ?>>
-          <?php if ($t['image_path']): ?>
-            <img src="<?= UPLOAD_URL . h($t['image_path']) ?>" alt="" style="width:20px;height:20px;border-radius:50%;object-fit:cover">
-          <?php endif; ?>
-          <?= h($t['name']) ?>
-        </label>
-        <?php endforeach; ?>
-      </div>
-    <?php endif; ?>
-
-    <div style="margin-top:16px">
-      <a href="tags.php?return=item&id=<?= $item_id ?>&coll=<?= $coll_id ?>" class="btn btn-ghost btn-sm">
-        + Create new tag
-      </a>
     </div>
-  </div>
-</div>
 
-<!-- Hidden form that carries tag checkboxes — ties into the main form submit -->
-<form id="tag-form" method="post" enctype="multipart/form-data" style="display:none"></form>
+    <!-- Tags sidebar -->
+    <div class="card">
+      <h3 style="font-family:var(--font-head);margin-bottom:12px">Tags</h3>
+
+      <?php if (empty($all_tags)): ?>
+        <p class="text-muted">No tags yet.</p>
+      <?php else: ?>
+        <input type="text" id="tag-search" class="form-control"
+               placeholder="Filter tags…" style="margin-bottom:10px" autocomplete="off">
+        <div id="tag-list" style="max-height:360px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
+
+          <?php if ($global_tags): ?>
+          <div class="tag-group-label">🌐 Global</div>
+          <?php foreach ($global_tags as $t): ?>
+          <label class="tag-check-row">
+            <input type="checkbox" name="tags[]" value="<?= $t['id'] ?>"
+                   <?= in_array($t['id'], $item_tags) ? 'checked' : '' ?>>
+            <?php if ($t['image_path']): ?>
+              <img src="<?= UPLOAD_URL . h($t['image_path']) ?>"
+                   style="width:22px;height:22px;border-radius:50%;object-fit:cover;flex-shrink:0">
+            <?php endif; ?>
+            <span class="tag-label"><?= h($t['name']) ?></span>
+          </label>
+          <?php endforeach; ?>
+          <?php endif; ?>
+
+          <?php if ($coll_tags): ?>
+          <div class="tag-group-label" style="margin-top:<?= $global_tags ? '8px' : '0' ?>">
+            📁 <?= h($coll['name']) ?>
+          </div>
+          <?php foreach ($coll_tags as $t): ?>
+          <label class="tag-check-row">
+            <input type="checkbox" name="tags[]" value="<?= $t['id'] ?>"
+                   <?= in_array($t['id'], $item_tags) ? 'checked' : '' ?>>
+            <?php if ($t['image_path']): ?>
+              <img src="<?= UPLOAD_URL . h($t['image_path']) ?>"
+                   style="width:22px;height:22px;border-radius:50%;object-fit:cover;flex-shrink:0">
+            <?php endif; ?>
+            <span class="tag-label"><?= h($t['name']) ?></span>
+          </label>
+          <?php endforeach; ?>
+          <?php endif; ?>
+
+        </div>
+      <?php endif; ?>
+
+      <div style="margin-top:14px">
+        <a href="collection_tags.php?coll=<?= $coll_id ?>"
+           class="btn btn-ghost btn-sm">🏷 Manage collection tags</a>
+      </div>
+    </div>
+
+  </div>
+</form>
+
+<style>
+.item-edit-grid {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 24px;
+  align-items: start;
+}
+@media (max-width: 700px) {
+  .item-edit-grid { grid-template-columns: 1fr; }
+}
+.tag-group-label {
+  font-size: .72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+  padding: 4px 2px 2px;
+}
+.tag-check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 5px 6px;
+  border-radius: 4px;
+  font-size: .92rem;
+}
+.tag-check-row:hover { background: #f0ebe0; }
+</style>
+
 <script>
-// Merge tag-form into main form on submit
-document.querySelector('form').addEventListener('submit', function(e) {
-  const main = this;
-  document.querySelectorAll('#tag-form input[type=checkbox]').forEach(cb => {
-    const h = document.createElement('input');
-    h.type  = 'hidden';
-    h.name  = cb.name;
-    h.value = cb.value;
-    if (cb.checked) main.appendChild(h);
+document.getElementById('tag-search')?.addEventListener('input', function() {
+  const q = this.value.toLowerCase();
+  document.querySelectorAll('.tag-check-row').forEach(row => {
+    const name = row.querySelector('.tag-label').textContent.toLowerCase();
+    row.style.display = name.includes(q) ? '' : 'none';
   });
 });
 </script>

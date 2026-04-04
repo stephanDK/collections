@@ -18,7 +18,6 @@ function page_header(string $title, string $active = ''): void { ?>
     <a href="<?= BASE_URL ?>/collections.php" class="site-logo">&#9632; Collections</a>
     <nav class="site-nav">
       <a href="<?= BASE_URL ?>/collections.php" class="<?= $active==='collections'?'active':'' ?>">Collections</a>
-      <a href="<?= BASE_URL ?>/tags.php"        class="<?= $active==='tags'?'active':'' ?>">Tags</a>
       <?php if (is_admin()): ?>
       <a href="<?= BASE_URL ?>/admin.php"       class="<?= $active==='admin'?'active':'' ?>">Admin</a>
       <?php endif; ?>

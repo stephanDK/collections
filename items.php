@@ -137,6 +137,7 @@ page_header(h($coll['name']), 'collections');
   <div class="flex gap-8">
     <a href="collections.php" class="btn btn-ghost btn-sm">← Collections</a>
     <a href="item_edit.php?coll=<?= $coll_id ?>" class="btn btn-primary btn-sm">+ Add Item</a>
+    <a href="collection_tags.php?coll=<?= $coll_id ?>" class="btn btn-ghost btn-sm">🏷 Tags</a>
   </div>
 </div>
 
@@ -183,7 +184,7 @@ page_header(h($coll['name']), 'collections');
       <tbody>
         <?php foreach ($items_data as $id => $d):
               $row = $d['row']; ?>
-        <tr>
+        <tr class="item-row" onclick="window.location='item_view.php?id=<?= $id ?>'" style="cursor:pointer">
           <?php if ($coll['has_images']): ?>
           <td>
             <?php if ($row['image_path']): ?>
@@ -205,10 +206,10 @@ page_header(h($coll['name']), 'collections');
           </td>
           <?php endforeach; ?>
 
-          <td>
+          <td onclick="event.stopPropagation()">
             <div class="tags-wrap">
               <?php foreach ($d['tags'] as $t): ?>
-                <a href="<?= items_url(['tag' => $t['id'], 'p' => 1]) ?>" class="tag-pill">
+                <a href="tag_view.php?id=<?= $t['id'] ?>" class="tag-pill">
                   <?php if ($t['image_path']): ?>
                     <img src="<?= UPLOAD_URL . h($t['image_path']) ?>" alt="">
                   <?php endif; ?>
@@ -222,7 +223,7 @@ page_header(h($coll['name']), 'collections');
             <?= date('d M Y', strtotime($row['created_at'])) ?>
           </td>
 
-          <td class="actions">
+          <td class="actions" onclick="event.stopPropagation()">
             <a href="item_edit.php?id=<?= $id ?>" class="btn btn-ghost btn-sm">Edit</a>
             <form method="post" action="item_delete.php" style="display:inline"
                   onsubmit="return confirm('Delete this item?')">
