@@ -4,7 +4,7 @@ require_once __DIR__ . '/layout.php';
 require_login();
 
 $tag_id = (int)($_GET['id'] ?? 0);
-if (!$tag_id) redirect(BASE_URL . '/tags.php');
+if (!$tag_id) redirect(BASE_URL . '/collections.php');
 
 $tag = $pdo->prepare(
     'SELECT t.*, u.username, c.name AS coll_name
@@ -15,7 +15,7 @@ $tag = $pdo->prepare(
 );
 $tag->execute([$tag_id]);
 $tag = $tag->fetch();
-if (!$tag) redirect(BASE_URL . '/tags.php');
+if (!$tag) redirect(BASE_URL . '/collections.php');
 
 // Items with this tag
 $items_stmt = $pdo->prepare(
@@ -45,29 +45,40 @@ page_header('Tag: ' . $tag['name'], 'tags');
 ?>
 
 <div class="flex align-center justify-between" style="margin-bottom:20px;flex-wrap:wrap;gap:10px">
-  <a href="tags.php" class="btn btn-ghost btn-sm">← All Tags</a>
-  <?php if ($tag['collection_id'] === null && is_admin()): ?>
-  <form method="post" action="admin.php" onsubmit="return confirm('Delete global tag «<?= h($tag['name']) ?>»?')">
-    <input type="hidden" name="action" value="delete_global_tag">
-    <input type="hidden" name="tag_id" value="<?= $tag_id ?>">
-    <button class="btn btn-danger btn-sm">Delete tag</button>
-  </form>
-  <?php elseif ($tag['collection_id']): ?>
-  <form method="post" action="collection_tags.php" onsubmit="return confirm('Delete tag «<?= h($tag['name']) ?>»?')">
-    <input type="hidden" name="action" value="delete_tag">
-    <input type="hidden" name="tag_id" value="<?= $tag_id ?>">
-    <input type="hidden" name="coll" value="<?= $tag['collection_id'] ?>">
-    <button class="btn btn-danger btn-sm">Delete tag</button>
-  </form>
+  <?php if (!$is_global && $tag['collection_id']): ?>
+    <a href="collection_tags.php?coll=<?= $tag['collection_id'] ?>" class="btn btn-ghost btn-sm">← All Tags</a>
+  <?php else: ?>
+    <a href="collections.php" class="btn btn-ghost btn-sm">← Collections</a>
   <?php endif; ?>
+  <div class="flex gap-8" style="flex-wrap:wrap">
+    <?php
+    $is_global = is_null($tag['collection_id']) || $tag['collection_id'] === '' || $tag['collection_id'] === false;
+    if (!is_guest() && $is_global && is_admin()): ?>
+      <a href="admin.php#global-tags" class="btn btn-ghost btn-sm">Edit in Admin</a>
+      <form method="post" action="admin.php" onsubmit="return confirm('Delete global tag «<?= h($tag['name']) ?>»?')">
+        <input type="hidden" name="action" value="delete_global_tag">
+        <input type="hidden" name="tag_id" value="<?= $tag_id ?>">
+        <button class="btn btn-danger btn-sm">Delete tag</button>
+      </form>
+    <?php elseif (!$is_global && !is_guest()): ?>
+      <a href="collection_tags.php?coll=<?= $tag['collection_id'] ?>&edit_tag=<?= $tag_id ?>" class="btn btn-ghost btn-sm">Edit tag</a>
+      <form method="post" action="collection_tags.php" onsubmit="return confirm('Delete tag «<?= h($tag['name']) ?>»?')">
+        <input type="hidden" name="action" value="delete_tag">
+        <input type="hidden" name="tag_id" value="<?= $tag_id ?>">
+        <input type="hidden" name="coll" value="<?= $tag['collection_id'] ?>">
+        <button class="btn btn-danger btn-sm">Delete tag</button>
+      </form>
+    <?php endif; ?>
+  </div>
 </div>
 
 <!-- Tag hero -->
 <div class="card" style="margin-bottom:24px">
   <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap">
     <?php if ($tag['image_path']): ?>
-    <img src="<?= UPLOAD_URL . h($tag['image_path']) ?>"
-         style="width:120px;height:120px;object-fit:cover;border-radius:8px;border:1px solid var(--border);flex-shrink:0">
+    <img src="<?= UPLOAD_URL . h($tag['image_path']) ?>" class="lightbox-trigger"
+         style="width:120px;height:120px;object-fit:cover;border-radius:8px;border:1px solid var(--border);flex-shrink:0"
+         title="Click to enlarge">
     <?php else: ?>
     <div style="width:120px;height:120px;background:#e8e0d0;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
       <span style="font-size:2.5rem;color:var(--muted)">🏷</span>
@@ -76,7 +87,7 @@ page_header('Tag: ' . $tag['name'], 'tags');
     <div>
       <h1 style="font-family:var(--font-head);font-size:2rem;margin-bottom:6px"><?= h($tag['name']) ?></h1>
       <div style="margin-bottom:8px">
-        <?php if ($tag['collection_id'] === null): ?>
+        <?php if ($is_global): ?>
           <span style="background:#2d6a4f;color:#fff;font-size:.75rem;font-weight:700;padding:3px 10px;border-radius:12px;letter-spacing:.04em">🌐 Global tag</span>
         <?php else: ?>
           <span style="background:#b5451b;color:#fff;font-size:.75rem;font-weight:700;padding:3px 10px;border-radius:12px;letter-spacing:.04em">📁 <?= h($tag['coll_name']) ?></span>
@@ -112,7 +123,7 @@ page_header('Tag: ' . $tag['name'], 'tags');
       <a href="item_view.php?id=<?= $it['id'] ?>" class="tag-item-card">
         <?php if ($it['image_path']): ?>
           <div class="tag-item-card__img">
-            <img src="<?= UPLOAD_URL . h($it['image_path']) ?>" alt="">
+            <img src="<?= UPLOAD_URL . h($it['image_path']) ?>" alt="" class="lightbox-trigger" title="Click to enlarge">
           </div>
         <?php else: ?>
           <div class="tag-item-card__img tag-item-card__img--empty">

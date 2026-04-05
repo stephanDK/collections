@@ -21,8 +21,11 @@ $search   = trim($_GET['q'] ?? '');
 $tag_id   = (int)($_GET['tag'] ?? 0);
 $sort_col = $_GET['sort'] ?? 'created_at';
 $sort_dir = strtoupper($_GET['dir'] ?? 'DESC') === 'ASC' ? 'ASC' : 'DESC';
-$page     = max(1, (int)($_GET['p'] ?? 1));
-$per_page = 40;
+$page         = max(1, (int)($_GET['p'] ?? 1));
+$per_page_raw = $_GET['pp'] ?? '10';
+if (!in_array($per_page_raw, ['10','50','100','all'])) $per_page_raw = '10';
+$per_page_all = ($per_page_raw === 'all');
+$per_page     = $per_page_all ? PHP_INT_MAX : (int)$per_page_raw;
 
 // Validate sort column
 $valid_sort_cols = ['created_at'];
@@ -64,40 +67,50 @@ $count_sql  = "SELECT COUNT(DISTINCT i.id) FROM items i $value_joins $where";
 $count_stmt = $pdo->prepare($count_sql);
 $count_stmt->execute($params);
 $total = (int)$count_stmt->fetchColumn();
-$pages = max(1, (int)ceil($total / $per_page));
-$page  = min($page, $pages);
-
-$offset = ($page - 1) * $per_page;
+if ($per_page_all) {
+    $pages  = 1;
+    $page   = 1;
+    $offset = 0;
+} else {
+    $pages  = max(1, (int)ceil($total / $per_page));
+    $page   = min($page, $pages);
+    $offset = ($page - 1) * $per_page;
+}
 
 // Fetch items
 $sql  = "SELECT DISTINCT i.id, i.image_path, i.created_at, u.username FROM items i $value_joins";
 $sql .= " LEFT JOIN users u ON u.id = i.created_by";
-$sql .= " $where ORDER BY $order_expr $sort_dir LIMIT $per_page OFFSET $offset";
+$sql .= " $where ORDER BY $order_expr $sort_dir";
+if (!$per_page_all) $sql .= " LIMIT $per_page OFFSET $offset";
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $items = $stmt->fetchAll();
 
-// For each item load values and tags
+// Bulk-load values and tags for all items in 2 queries (avoids N+1)
+$item_ids   = array_column($items, 'id');
 $items_data = [];
 foreach ($items as $item) {
-    // values
-    $vs = $pdo->prepare('SELECT field_id, value FROM item_values WHERE item_id = ?');
-    $vs->execute([$item['id']]);
-    $vals = [];
-    foreach ($vs->fetchAll() as $v) $vals[$v['field_id']] = $v['value'];
+    $items_data[$item['id']] = ['row' => $item, 'vals' => [], 'tags' => []];
+}
 
-    // tags
+if ($item_ids) {
+    $ph = implode(',', array_fill(0, count($item_ids), '?'));
+
+    $vs = $pdo->prepare("SELECT item_id, field_id, value FROM item_values WHERE item_id IN ($ph)");
+    $vs->execute($item_ids);
+    foreach ($vs->fetchAll() as $v) {
+        $items_data[$v['item_id']]['vals'][$v['field_id']] = $v['value'];
+    }
+
     $ts = $pdo->prepare(
-        'SELECT t.id, t.name, t.image_path FROM tags t
-         JOIN item_tags it ON it.tag_id = t.id WHERE it.item_id = ? ORDER BY t.name'
+        "SELECT it.item_id, t.id, t.name, t.image_path
+         FROM tags t JOIN item_tags it ON it.tag_id = t.id
+         WHERE it.item_id IN ($ph) ORDER BY t.name"
     );
-    $ts->execute([$item['id']]);
-
-    $items_data[$item['id']] = [
-        'row'  => $item,
-        'vals' => $vals,
-        'tags' => $ts->fetchAll(),
-    ];
+    $ts->execute($item_ids);
+    foreach ($ts->fetchAll() as $t) {
+        $items_data[$t['item_id']]['tags'][] = $t;
+    }
 }
 
 // Active tag filter name
@@ -110,9 +123,9 @@ if ($tag_id) {
 
 // ── URL helper ───────────────────────────────────────────────────────────────
 function items_url(array $overrides = []): string {
-    global $coll_id, $search, $tag_id, $sort_col, $sort_dir, $page;
+    global $coll_id, $search, $tag_id, $sort_col, $sort_dir, $page, $per_page_raw;
     $params = ['coll' => $coll_id, 'q' => $search, 'tag' => $tag_id,
-               'sort' => $sort_col, 'dir' => $sort_dir, 'p' => $page];
+               'sort' => $sort_col, 'dir' => $sort_dir, 'p' => $page, 'pp' => $per_page_raw];
     return BASE_URL . '/items.php?' . http_build_query(array_merge($params, $overrides));
 }
 
@@ -135,8 +148,10 @@ page_header(h($coll['name']), 'collections');
     <small><?= $total ?> item<?= $total!=1?'s':'' ?></small>
   </h1>
   <div class="flex gap-8">
-    <a href="collections.php" class="btn btn-ghost btn-sm">← Collections</a>
+    <?php if (!is_guest()): ?>
     <a href="item_edit.php?coll=<?= $coll_id ?>" class="btn btn-primary btn-sm">+ Add Item</a>
+    <a href="item_import.php?coll=<?= $coll_id ?>" class="btn btn-ghost btn-sm">⇅ Bulk Edit</a>
+    <?php endif; ?>
     <a href="collection_tags.php?coll=<?= $coll_id ?>" class="btn btn-ghost btn-sm">🏷 Tags</a>
   </div>
 </div>
@@ -149,8 +164,13 @@ page_header(h($coll['name']), 'collections');
   <input type="text" name="q" class="form-control search-input" placeholder="Search…"
          value="<?= h($search) ?>">
   <button class="btn btn-secondary btn-sm">Search</button>
+  <select id="pp-select" class="form-control" style="width:auto" autocomplete="off" onchange="setPerPage(this.value)">
+    <?php foreach (['10' => '10', '50' => '50', '100' => '100', 'all' => 'All'] as $val => $lbl): ?>
+    <option value="<?= $val ?>" <?= $per_page_raw === $val ? 'selected' : '' ?>><?= $lbl ?> per page</option>
+    <?php endforeach; ?>
+  </select>
   <?php if ($search || $tag_id): ?>
-    <a href="items.php?coll=<?= $coll_id ?>" class="btn btn-ghost btn-sm">Clear</a>
+    <a href="items.php?coll=<?= $coll_id ?>&pp=<?= $per_page_raw ?>" class="btn btn-ghost btn-sm">Clear</a>
   <?php endif; ?>
 </form>
 
@@ -224,6 +244,7 @@ page_header(h($coll['name']), 'collections');
           </td>
 
           <td class="actions" onclick="event.stopPropagation()">
+            <?php if (!is_guest()): ?>
             <a href="item_edit.php?id=<?= $id ?>" class="btn btn-ghost btn-sm">Edit</a>
             <form method="post" action="item_delete.php" style="display:inline"
                   onsubmit="return confirm('Delete this item?')">
@@ -231,6 +252,7 @@ page_header(h($coll['name']), 'collections');
               <input type="hidden" name="coll" value="<?= $coll_id ?>">
               <button class="btn btn-danger btn-sm">Delete</button>
             </form>
+            <?php endif; ?>
           </td>
         </tr>
         <?php endforeach; ?>
@@ -240,7 +262,7 @@ page_header(h($coll['name']), 'collections');
 </div>
 
 <!-- Pagination -->
-<?php if ($pages > 1): ?>
+<?php if ($pages > 1 && !$per_page_all): ?>
 <div class="pagination">
   <?php if ($page > 1): ?>
     <a href="<?= items_url(['p' => $page-1]) ?>">‹ Prev</a>
@@ -259,4 +281,20 @@ page_header(h($coll['name']), 'collections');
 <?php endif; ?>
 <?php endif; ?>
 
+<script>
+// Force dropdown to match URL parameter — overrides browser autocomplete
+(function() {
+  var url = new URL(window.location.href);
+  var pp = url.searchParams.get('pp') || '10';
+  var sel = document.getElementById('pp-select');
+  if (sel) sel.value = pp;
+})();
+
+function setPerPage(val) {
+  var url = new URL(window.location.href);
+  url.searchParams.set('pp', val);
+  url.searchParams.set('p', '1');
+  window.location.href = url.toString();
+}
+</script>
 <?php page_footer(); ?>

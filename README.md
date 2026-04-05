@@ -12,7 +12,8 @@ A lightweight, self-hosted web application for managing personal collections —
 
 - **Login-gated** — nothing is visible without authentication
 - **Admin panel**
-  - Create and delete users, toggle admin role
+  - Create and delete users, toggle admin/guest role
+  - Edit users (username, password, role)
   - Create and delete collections with custom names and descriptions
   - Define custom fields per collection (text, number, or boolean)
   - Toggle image support per collection
@@ -20,15 +21,27 @@ A lightweight, self-hosted web application for managing personal collections —
 - **Items**
   - Add, edit and delete items in any collection
   - Sortable, searchable table with pagination
-  - Click any row to see a full item view
+  - Configurable items per page (10, 50, 100, or all)
+  - Click any row to see a full item view with prev/next navigation
   - Upload an image per item (JPEG, PNG, GIF, WebP)
   - "Save & Add Another" for rapid data entry
+- **Bulk Edit (CSV import/export)**
+  - Download current items as a semicolon-separated CSV (opens directly in Danish Excel)
+  - Upload edited CSV to create or update items in bulk
+  - Preview before committing — shows new, updated, unchanged and skipped rows
+  - Tags can be included as comma-separated values in the CSV
+  - Unknown tags are auto-created on import
 - **Tags — two scopes**
   - **Global tags** (admin only) — apply across all collections
   - **Collection tags** (all users) — specific to one collection
   - Tags can have an optional image
-  - Click a tag to see all items with that tag
+  - Click a tag to see all items with that tag in a visual grid
+- **Guest access**
+  - Admin can create guest users with read-only access
+  - Guests see all collections, items and tags but cannot create, edit or delete anything
+  - All write operations are blocked server-side for guests
 - **Responsive** — works on desktop and mobile
+- **Warm editorial design** — Playfair Display + Source Sans 3, paper-toned palette
 
 ---
 
@@ -36,7 +49,7 @@ A lightweight, self-hosted web application for managing personal collections —
 
 - PHP 8.0 or higher
 - MySQL 5.7 or higher (or MariaDB equivalent)
-- A web server with mod_rewrite (Apache) or equivalent
+- A web server with Apache (mod_rewrite or equivalent)
 - Writable `uploads/` directory
 
 ---
@@ -51,10 +64,13 @@ git clone https://github.com/yourusername/collections.git
 
 ### 2. Create the database
 
-In phpMyAdmin (or via CLI):
-1. Create a new database — name it whatever you like, e.g. `collections_db`
-2. Set collation to `utf8mb4_unicode_ci`
-3. Select the new database, go to the **SQL tab**, paste the contents of `install.sql` and execute
+In phpMyAdmin (or via CLI), create a new database with `utf8mb4_unicode_ci` collation, then run the install script:
+
+```
+phpMyAdmin → select your database → SQL tab → paste contents of install.sql → execute
+```
+
+This creates all tables. Note: does **not** create the admin user — see step 6.
 
 ### 3. Configure
 
@@ -83,21 +99,51 @@ chmod 755 uploads
 
 ### 5. Upload via FTP
 
-Upload all files to your web server. `config.php` and `setup.php` are excluded from Git — see Security notes below.
+Upload all files to your web server. `config.php` and `setup.php` are excluded from Git — never commit them.
 
 ### 6. Create the admin user
 
 Go to `https://yourdomain.com/collections/setup.php` in your browser.
 
-This generates a secure password hash on your own server and inserts the admin user into the database. You will see a confirmation message when it succeeds.
+This generates a secure bcrypt password hash on your own server and inserts the admin user.
 
-> ⚠️ **Delete `setup.php` from the server immediately after** — it should never be left accessible.
+> ⚠️ **Delete `setup.php` from the server immediately after** — it must never be left accessible.
 
 ### 7. Log in and change the password
 
-Go to `https://yourdomain.com/collections/` and log in with `admin` / `admin`.
+Go to your site and log in with `admin` / `admin`.
 
-Immediately go to **Admin → Users**, create a new admin user with a strong password, and delete the default `admin` account.
+Go to **Admin → Users**, create a new admin user with a strong password, and delete the default `admin` account.
+
+---
+
+## Bulk Edit (CSV)
+
+Each collection has a **⇅ Bulk Edit** button that opens a two-step import/export page.
+
+**Download:** exports all items as a `;`-separated CSV with a UTF-8 BOM — opens directly in Danish/European Excel without any import wizard.
+
+**Upload:** parse the CSV and shows a preview before saving:
+- Rows with an empty `id` column are created as new items
+- Rows with an existing `id` are updated if changed, skipped if identical
+- Tags are written as comma-separated names in the `tags` column
+- Unknown tags are automatically created as collection tags
+
+---
+
+## Guest Access
+
+Admin can create guest users in **Admin → New User** by checking "Guest (read-only)".
+
+Guests can:
+- Browse all collections, items and tags
+- See item details and tag views
+- Export CSV
+
+Guests cannot:
+- Create, edit or delete items
+- Create, edit or delete tags
+- Access the admin panel or bulk import
 
 ---
 
@@ -111,13 +157,15 @@ collections/
 ├── .htaccess              # Blocks direct access to config.php
 ├── index.php              # Login page
 ├── logout.php
-├── layout.php             # Shared header/footer
+├── layout.php             # Shared header/footer + lightbox
 ├── style.css
 ├── collections.php        # Collection overview
-├── items.php              # Item list with search, sort, filter
+├── items.php              # Item list with search, sort, filter, pagination
 ├── item_edit.php          # Add / edit item
-├── item_view.php          # Single item view
+├── item_view.php          # Single item view with prev/next
 ├── item_delete.php        # Delete handler
+├── item_export.php        # CSV export
+├── item_import.php        # CSV import with preview
 ├── collection_tags.php    # Tag management per collection
 ├── tag_view.php           # Single tag view
 ├── admin.php              # Admin panel (users, collections, global tags)
@@ -135,6 +183,7 @@ collections/
 - Passwords are hashed with `password_hash()` (bcrypt)
 - All database queries use PDO prepared statements
 - All output is escaped with `htmlspecialchars()`
+- Guest write operations are blocked server-side, not just in the UI
 
 ---
 

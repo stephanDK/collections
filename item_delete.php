@@ -1,6 +1,6 @@
 <?php
 require_once __DIR__ . '/config.php';
-require_login();
+require_editor();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     redirect(BASE_URL . '/collections.php');

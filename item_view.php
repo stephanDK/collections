@@ -57,7 +57,7 @@ page_header($item['coll_name'] . ' – Item', 'collections');
     <?php if ($next): ?>
       <a href="item_view.php?id=<?= $next ?>" class="btn btn-ghost btn-sm">Next ›</a>
     <?php endif; ?>
-    <a href="item_edit.php?id=<?= $item_id ?>" class="btn btn-primary btn-sm">Edit</a>
+    <?php if (!is_guest()): ?><a href="item_edit.php?id=<?= $item_id ?>" class="btn btn-primary btn-sm">Edit</a><?php endif; ?>
   </div>
 </div>
 
@@ -66,8 +66,9 @@ page_header($item['coll_name'] . ' – Item', 'collections');
   <!-- Image -->
   <?php if ($item['has_images'] && $item['image_path']): ?>
   <div class="card" style="padding:16px;text-align:center">
-    <img src="<?= UPLOAD_URL . h($item['image_path']) ?>"
-         style="max-width:100%;max-height:500px;object-fit:contain;border-radius:4px">
+    <img src="<?= UPLOAD_URL . h($item['image_path']) ?>" class="lightbox-trigger"
+         style="max-width:100%;max-height:500px;object-fit:contain;border-radius:4px"
+         title="Click to enlarge">
   </div>
   <?php endif; ?>
 

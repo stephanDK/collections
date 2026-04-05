@@ -136,7 +136,8 @@ page_header('Tags', 'tags');
         <thead><tr><th>Tag</th><th>Items</th><th>Created by</th><th>Actions</th></tr></thead>
         <tbody>
         <?php foreach ($tags as $t): ?>
-        <tr class="<?= $t['id'] == $selected_tag ? 'selected-row' : '' ?>">
+        <tr class="item-row <?= $t['id'] == $selected_tag ? 'selected-row' : '' ?>"
+            onclick="window.location='tag_view.php?id=<?= $t['id'] ?>'" style="cursor:pointer">
           <td>
             <div style="display:flex;align-items:center;gap:8px">
               <?php if ($t['image_path']): ?>
@@ -146,13 +147,13 @@ page_header('Tags', 'tags');
               <strong><?= h($t['name']) ?></strong>
             </div>
           </td>
-          <td>
+          <td onclick="event.stopPropagation()">
             <a href="tags.php?tag=<?= $t['id'] ?>&q=<?= urlencode($search) ?>" class="btn btn-ghost btn-sm">
               <?= $t['item_count'] ?> item<?= $t['item_count']!=1?'s':'' ?>
             </a>
           </td>
           <td class="text-muted"><?= h($t['username'] ?? '—') ?></td>
-          <td class="actions">
+          <td class="actions" onclick="event.stopPropagation()">
             <form method="post" onsubmit="return confirm('Delete tag <?= h($t['name']) ?>?')">
               <input type="hidden" name="action"  value="delete_tag">
               <input type="hidden" name="tag_id"  value="<?= $t['id'] ?>">

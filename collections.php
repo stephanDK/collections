@@ -13,6 +13,12 @@ $collections = $pdo->query(
 page_header('Collections', 'collections');
 ?>
 
+<?php if (is_guest()): ?>
+<div class="flash flash--info" style="margin-bottom:16px">
+  👁 You have read-only guest access. Contact an admin to make changes.
+</div>
+<?php endif; ?>
+
 <div class="flex align-center justify-between" style="margin-bottom:24px">
   <h1 class="page-title mt-0" style="border:none;padding:0;margin:0">My Collections</h1>
 </div>

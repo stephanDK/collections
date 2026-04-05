@@ -13,6 +13,12 @@ if (!$coll) redirect(BASE_URL . '/collections.php');
 
 $action = $_POST['action'] ?? '';
 
+// Block guests from all write actions
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && is_guest()) {
+    flash('error', 'Guests have read-only access.');
+    redirect(BASE_URL . '/collection_tags.php?coll=' . $coll_id);
+}
+
 // ── Add tag ───────────────────────────────────────────────────────────────────
 if ($action === 'add_tag' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $name = trim($_POST['tag_name'] ?? '');
@@ -103,6 +109,14 @@ if ($search) {
 }
 $tags = $tags_stmt->fetchAll();
 
+// First field for sort link
+$first_field = $pdo->prepare(
+    'SELECT id FROM collection_fields WHERE collection_id=? ORDER BY sort_order LIMIT 1'
+);
+$first_field->execute([$coll_id]);
+$first_field_id = $first_field->fetchColumn();
+$first_field_sort = $first_field_id ? 'f_' . $first_field_id : 'created_at';
+
 // Tag being edited
 $edit_tag = null;
 if (isset($_GET['edit_tag'])) {
@@ -155,22 +169,28 @@ page_header('Tags – ' . $coll['name'], 'collections');
               <?php else: ?>
                 <span style="width:28px;height:28px;background:#e8e0d0;border-radius:50%;display:inline-block;flex-shrink:0"></span>
               <?php endif; ?>
-              <strong><?= h($t['name']) ?></strong>
+              <a href="tag_view.php?id=<?= $t['id'] ?>" style="color:inherit;font-weight:700;text-decoration:none">
+                <?= h($t['name']) ?>
+              </a>
             </div>
           </td>
           <td>
-            <a href="items.php?coll=<?= $coll_id ?>&tag=<?= $t['id'] ?>" class="btn btn-ghost btn-sm">
+            <a href="items.php?coll=<?= $coll_id ?>&tag=<?= $t['id'] ?>&sort=<?= $first_field_sort ?>&dir=ASC" class="btn btn-ghost btn-sm">
               <?= $t['item_count'] ?> item<?= $t['item_count']!=1?'s':'' ?>
             </a>
           </td>
           <td class="text-muted"><?= h($t['username'] ?? '—') ?></td>
-          <td class="actions">
-            <a href="?coll=<?= $coll_id ?>&edit_tag=<?= $t['id'] ?>" class="btn btn-ghost btn-sm">Edit</a>
-            <form method="post" onsubmit="return confirm('Delete tag \'<?= h($t['name']) ?>\'?<?= $t['item_count'] > 0 ? ' It is used in ' . $t['item_count'] . ' item(s).' : '' ?>')">
-              <input type="hidden" name="action" value="delete_tag">
-              <input type="hidden" name="tag_id" value="<?= $t['id'] ?>">
-              <button class="btn btn-danger btn-sm">Delete</button>
-            </form>
+          <td onclick="event.stopPropagation()">
+            <?php if (!is_guest()): ?>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+              <a href="?coll=<?= $coll_id ?>&edit_tag=<?= $t['id'] ?>" class="btn btn-ghost btn-sm">Edit</a>
+              <form method="post" onsubmit="return confirm('Delete tag \'<?= h($t['name']) ?>\'?<?= $t['item_count'] > 0 ? ' It is used in ' . $t['item_count'] . ' item(s).' : '' ?>')">
+                <input type="hidden" name="action" value="delete_tag">
+                <input type="hidden" name="tag_id" value="<?= $t['id'] ?>">
+                <button class="btn btn-danger btn-sm">Delete</button>
+              </form>
+            </div>
+            <?php endif; ?>
           </td>
         </tr>
         <?php endforeach; ?>
@@ -181,6 +201,7 @@ page_header('Tags – ' . $coll['name'], 'collections');
   </div>
 
   <!-- Add / Edit form -->
+  <?php if (!is_guest()): ?>
   <div class="card">
     <?php if ($edit_tag): ?>
       <h3 style="font-family:var(--font-head);margin-bottom:14px">Edit Tag</h3>
@@ -236,4 +257,5 @@ page_header('Tags – ' . $coll['name'], 'collections');
 }
 </style>
 
+<?php endif; ?>
 <?php page_footer(); ?>
